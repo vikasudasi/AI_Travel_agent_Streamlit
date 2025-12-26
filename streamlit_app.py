@@ -1,7 +1,9 @@
 import streamlit as st
 import os
+import requests
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
+from langchain_ollama import ChatOllama
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain.tools import tool
 from langchain_community.utilities import OpenWeatherMapAPIWrapper, GoogleSerperAPIWrapper
@@ -27,6 +29,8 @@ if 'travel_agent' not in st.session_state:
     st.session_state.travel_agent = None
 if 'chat_history' not in st.session_state:
     st.session_state.chat_history = []
+if 'model_provider' not in st.session_state:
+    st.session_state.model_provider = "OpenAI"
 
 # Custom Tools
 @tool
@@ -98,6 +102,74 @@ def youtube_search(query: str) -> str:
     except Exception as e:
         return f"YouTube search unavailable. Error: {str(e)}"
 
+@tool
+def get_exchange_rate(from_currency: str, to_currency: str) -> str:
+    """Get current exchange rate between two currencies using ExchangeRate-API.com.
+    
+    Args:
+        from_currency: Source currency code (e.g., 'INR', 'USD', 'EUR', 'GBP')
+        to_currency: Target currency code (e.g., 'USD', 'INR', 'EUR', 'GBP')
+    
+    Returns:
+        str: Current exchange rate and conversion information
+    """
+    try:
+        from_currency = from_currency.upper().strip()
+        to_currency = to_currency.upper().strip()
+        
+        # Get API key from Streamlit secrets or environment
+        api_key = st.secrets.get("EXCHANGERATE_API_KEY") or os.getenv("EXCHANGERATE_API_KEY")
+        
+        if not api_key:
+            # Fallback to free API if no key provided
+            url = f"https://api.exchangerate-api.com/v4/latest/{from_currency}"
+            response = requests.get(url, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                rates = data.get("rates", {})
+                if to_currency in rates:
+                    rate = rates[to_currency]
+                    date = data.get("date", "today")
+                    return f"Current exchange rate: 1 {from_currency} = {rate:.4f} {to_currency} (as of {date})"
+                else:
+                    return f"Currency {to_currency} not found in exchange rates."
+            else:
+                return f"Unable to fetch exchange rate. Please try again later."
+        
+        # Use ExchangeRate-API.com v6 with API key
+        url = f"https://v6.exchangerate-api.com/v6/{api_key}/latest/{from_currency}"
+        response = requests.get(url, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            
+            if data.get("result") == "success":
+                conversion_rates = data.get("conversion_rates", {})
+                
+                if to_currency in conversion_rates:
+                    rate = conversion_rates[to_currency]
+                    time_last_update = data.get("time_last_update_utc", "recent")
+                    
+                    # Calculate example conversion
+                    example_amount = 100
+                    converted_amount = rate * example_amount
+                    
+                    return f"Current exchange rate: 1 {from_currency} = {rate:.4f} {to_currency} (last updated: {time_last_update}). Example: {example_amount} {from_currency} = {converted_amount:.2f} {to_currency}"
+                else:
+                    return f"Currency {to_currency} not found. Available currencies include: USD, EUR, GBP, INR, JPY, AUD, CAD, and many more."
+            else:
+                return f"API returned error: {data.get('error-type', 'Unknown error')}"
+        else:
+            return f"Unable to fetch exchange rate. Status code: {response.status_code}. Please check your API key."
+            
+    except requests.exceptions.Timeout:
+        return "Request timed out. Please try again later."
+    except requests.exceptions.RequestException as e:
+        return f"Network error fetching exchange rate: {str(e)}"
+    except Exception as e:
+        return f"Error fetching exchange rate: {str(e)}. Please try using search_google or search_duck as fallback."
+
 # Advanced calculation tool
 python_repl = PythonREPL()
 repl_tool = Tool(
@@ -106,24 +178,47 @@ repl_tool = Tool(
     func=python_repl.run,
 )
 
-def initialize_travel_agent():
+def initialize_travel_agent(model_provider="OpenAI", ollama_base_url="http://localhost:11434"):
     """Initialize the travel agent with all tools and configurations."""
     try:
-        # Get OpenAI API key from Streamlit secrets or environment
-        openai_api_key = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
-        
-        if not openai_api_key:
-            st.error("❌ OpenAI API key not found. Please add it to Streamlit secrets.")
-            st.info("💡 Go to Settings → Secrets and add: OPENAI_API_KEY = \"your-key-here\"")
-            return None
-        
-        # Initialize OpenAI model - FIXED: Removed SecretStr
-        llm = ChatOpenAI(
-            model="gpt-4o",
-            temperature=0,
-            max_tokens=2000,
-            api_key=openai_api_key  # Direct string, not SecretStr
-        )
+        # Initialize LLM based on provider
+        if model_provider == "Ollama":
+            # Check if Ollama is running
+            try:
+                response = requests.get(f"{ollama_base_url}/api/tags", timeout=2)
+                if response.status_code != 200:
+                    st.error("❌ Ollama server is not running. Please start Ollama first.")
+                    st.info("💡 Run: `ollama serve` in your terminal")
+                    return None
+            except Exception as e:
+                st.error("❌ Cannot connect to Ollama server.")
+                st.info(f"💡 Make sure Ollama is running at {ollama_base_url}")
+                st.info("💡 Run: `ollama serve` in your terminal")
+                return None
+            
+            # Initialize Ollama model
+            llm = ChatOllama(
+                model="llama3.2",
+                base_url=ollama_base_url,
+                temperature=0,
+                num_ctx=4096,  # Context window
+            )
+        else:
+            # Get OpenAI API key from Streamlit secrets or environment
+            openai_api_key = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
+            
+            if not openai_api_key:
+                st.error("❌ OpenAI API key not found. Please add it to Streamlit secrets.")
+                st.info("💡 Go to Settings → Secrets and add: OPENAI_API_KEY = \"your-key-here\"")
+                return None
+            
+            # Initialize OpenAI model
+            llm = ChatOpenAI(
+                model="gpt-4o",
+                temperature=0,
+                max_tokens=2000,
+                api_key=openai_api_key
+            )
         
         # System prompt
         system_prompt = SystemMessage("""
@@ -136,8 +231,11 @@ def initialize_travel_agent():
            - Top attractions with entry fees
            - Restaurants with price ranges
            - Transportation options with costs
-           - CURRENCY CONVERSION: If user needs different currency, search for:
-             "current exchange rate [from_currency] to [to_currency] today"
+           
+        STEP 2a: CURRENCY CONVERSION: ALWAYS use get_exchange_rate tool first for currency conversions.
+           Format: get_exchange_rate("INR", "USD") or get_exchange_rate("USD", "INR")
+           This tool provides accurate, real-time exchange rates.
+           Only use search_google or search_duck as fallback if the tool fails.
 
         STEP 3: ALWAYS use arithmetic tools (addition, multiply) to calculate:
            - Hotel cost = daily_rate × number_of_days
@@ -170,7 +268,7 @@ def initialize_travel_agent():
         
         # Create tools list
         tools = [addition, multiply, division, substraction, get_weather, 
-                search_google, search_duck, repl_tool, youtube_search]
+                search_google, search_duck, repl_tool, youtube_search, get_exchange_rate]
         
         # Bind tools to LLM
         llm_with_tools = llm.bind_tools(tools)
@@ -208,19 +306,62 @@ def main():
     </div>
     """, unsafe_allow_html=True)
     
+    # Model Provider Selection
+    st.sidebar.header("🤖 Model Provider")
+    model_provider = st.sidebar.selectbox(
+        "Choose AI Model:",
+        ["OpenAI", "Ollama"],
+        index=0 if st.session_state.model_provider == "OpenAI" else 1,
+        key="model_provider_select"
+    )
+    
+    # Update session state if changed
+    if model_provider != st.session_state.model_provider:
+        st.session_state.model_provider = model_provider
+        st.session_state.travel_agent = None  # Reset agent when switching providers
+    
+    # Ollama configuration (only show if Ollama is selected)
+    if model_provider == "Ollama":
+        ollama_base_url = st.sidebar.text_input(
+            "Ollama Base URL:",
+            value="http://localhost:11434",
+            help="Default: http://localhost:11434"
+        )
+        st.session_state.ollama_base_url = ollama_base_url
+        
+        # Check Ollama connection
+        try:
+            response = requests.get(f"{ollama_base_url}/api/tags", timeout=2)
+            if response.status_code == 200:
+                st.sidebar.success("✅ Ollama Connected")
+                # Check if llama3.2 is available
+                models = response.json().get("models", [])
+                model_names = [m.get("name", "") for m in models]
+                if any("llama3.2" in name for name in model_names):
+                    st.sidebar.success("✅ llama3.2 Available")
+                else:
+                    st.sidebar.warning("⚠️ llama3.2 not found")
+                    st.sidebar.info("💡 Run: `ollama pull llama3.2`")
+            else:
+                st.sidebar.error("❌ Ollama Not Running")
+        except Exception as e:
+            st.sidebar.error("❌ Cannot Connect to Ollama")
+            st.sidebar.info("💡 Make sure Ollama is running")
+    
     # API Status Check
     st.sidebar.header("📡 API Status")
     
-    # Check API keys
-    openai_key = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
+    # Check API keys (only show OpenAI status if OpenAI is selected)
+    if model_provider == "OpenAI":
+        openai_key = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
+        if openai_key:
+            st.sidebar.success("✅ OpenAI API")
+        else:
+            st.sidebar.error("❌ OpenAI API Missing")
+            st.sidebar.info("Required for OpenAI mode")
+    
     serper_key = st.secrets.get("SERPER_API_KEY") or os.getenv("SERPER_API_KEY")
     weather_key = st.secrets.get("OPENWEATHERMAP_API_KEY") or os.getenv("OPENWEATHERMAP_API_KEY")
-    
-    if openai_key:
-        st.sidebar.success("✅ OpenAI API")
-    else:
-        st.sidebar.error("❌ OpenAI API Missing")
-        st.sidebar.info("Required for the app to work")
     
     if serper_key:
         st.sidebar.success("✅ Serper API")
@@ -275,14 +416,21 @@ Calculate total trip cost in both USD and INR."""
             st.warning("Please enter your travel query!")
             return
         
-        if not openai_key:
-            st.error("❌ OpenAI API key is required. Please add it to Streamlit secrets.")
-            return
+        # Validate provider-specific requirements
+        if model_provider == "OpenAI":
+            openai_key = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
+            if not openai_key:
+                st.error("❌ OpenAI API key is required. Please add it to Streamlit secrets.")
+                return
         
         # Initialize travel agent
         if st.session_state.travel_agent is None:
-            with st.spinner("🔧 Initializing AI Travel Agent..."):
-                st.session_state.travel_agent = initialize_travel_agent()
+            with st.spinner(f"🔧 Initializing AI Travel Agent with {model_provider}..."):
+                ollama_url = st.session_state.get("ollama_base_url", "http://localhost:11434")
+                st.session_state.travel_agent = initialize_travel_agent(
+                    model_provider=model_provider,
+                    ollama_base_url=ollama_url
+                )
         
         if st.session_state.travel_agent is None:
             st.error("❌ Failed to initialize travel agent. Please check your API keys.")

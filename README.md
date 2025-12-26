@@ -31,7 +31,12 @@ Make sure your `.env` file contains:
 OPENAI_API_KEY=your_openai_api_key_here
 SERPER_API_KEY=your_serper_api_key_here  
 OPENWEATHERMAP_API_KEY=your_openweathermap_api_key_here
+EXCHANGERATE_API_KEY=your_exchangerate_api_key_here
 ```
+
+**Note:** 
+- If you're using Ollama (local), you don't need the `OPENAI_API_KEY`.
+- `EXCHANGERATE_API_KEY` is optional - the app will use a free API if not provided, but having an API key provides better rate limits and features.
 
 ### 4. **Install Dependencies**
 
@@ -39,21 +44,75 @@ OPENWEATHERMAP_API_KEY=your_openweathermap_api_key_here
 pip install -r requirements.txt
 ```
 
+### 5. **Ollama Setup (Optional - for Local AI Model)**
+
+If you want to use local Ollama with `llama3.2` instead of OpenAI:
+
+1. **Install Ollama:**
+   - Visit [https://ollama.ai](https://ollama.ai) and download Ollama for your OS
+   - Or use: `curl -fsSL https://ollama.com/install.sh | sh`
+
+2. **Start Ollama Server:**
+   ```bash
+   ollama serve
+   ```
+   (Keep this running in a separate terminal)
+
+3. **Pull the llama3.2 Model:**
+   ```bash
+   ollama pull llama3.2
+   ```
+
+4. **Verify Installation:**
+   ```bash
+   ollama list
+   ```
+   You should see `llama3.2` in the list.
+
+5. **In the Streamlit App:**
+   - Select "Ollama" from the "Model Provider" dropdown in the sidebar
+   - The app will automatically connect to `http://localhost:11434`
+   - If your Ollama server is on a different URL, you can change it in the sidebar
+
+### 6. **ExchangeRate API Key (Optional - for Better Currency Conversion)**
+
+The app includes a dedicated exchange rate tool that works without an API key (uses free API), but you can get better rate limits with an API key:
+
+1. **Get Free API Key:**
+   - Visit [ExchangeRate-API.com](https://www.exchangerate-api.com/)
+   - Sign up for a free account
+   - Get your API key from the dashboard
+   - Free tier: 1,500 requests/month
+
+2. **Add to `.env` file:**
+   ```env
+   EXCHANGERATE_API_KEY=your_api_key_here
+   ```
+
+3. **Note:** The exchange rate tool works without an API key, but having one provides:
+   - Higher rate limits
+   - More reliable service
+   - Access to historical data (if needed)
+
 ## 🚀 Running Locally
+
+### **Prerequisites:**
+- If using **OpenAI**: Make sure your `OPENAI_API_KEY` is set in `.env` or Streamlit secrets
+- If using **Ollama**: Make sure Ollama is running (`ollama serve`) and `llama3.2` is pulled
 
 ### **Method 1: Simple Run**
 ```bash
-streamlit run app.py
+streamlit run streamlit_app.py
 ```
 
 ### **Method 2: Custom Port**
 ```bash
-streamlit run app.py --server.port 8080
+streamlit run streamlit_app.py --server.port 8080
 ```
 
 ### **Method 3: Development Mode**
 ```bash
-streamlit run app.py --server.runOnSave true
+streamlit run streamlit_app.py --server.runOnSave true
 ```
 
 Your app will open automatically in your browser at `http://localhost:8501`
@@ -191,8 +250,15 @@ pip install streamlit
 
 **"Port Already in Use"**
 ```bash
-streamlit run app.py --server.port 8502
+streamlit run streamlit_app.py --server.port 8502
 ```
+
+**"Ollama Connection Error"**
+- Make sure Ollama is running: `ollama serve`
+- Check if the model is installed: `ollama list`
+- Pull the model if missing: `ollama pull llama3.2`
+- Verify Ollama is accessible: `curl http://localhost:11434/api/tags`
+- If using a different port, update the "Ollama Base URL" in the sidebar
 
 ## 📈 Performance Tips
 
@@ -218,6 +284,8 @@ streamlit run app.py --server.port 8502
 - **🎯 Example queries** for easy testing
 - **📈 API status monitoring**
 - **🎥 Embedded YouTube videos**
+- **🤖 Multiple AI Providers** - Switch between OpenAI and local Ollama
+- **🔌 Ollama Integration** - Run with local llama3.2 model (no API costs!)
 
 ---
 
